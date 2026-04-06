@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:google_sign_in/google_sign_in.dart';
 import '../domain/member_model.dart';
 import '../../../core/error/app_exception.dart';
@@ -24,7 +25,20 @@ class AuthRepository {
 
     // Crown API에 Firebase 토큰으로 회원 정보 요청 (자동 가입 포함)
     final res = await _dio.get('/api/member/me');
-    return MemberModel.fromJson(res.data as Map<String, dynamic>);
+    final member = MemberModel.fromJson(res.data as Map<String, dynamic>);
+
+    // FCM 토큰 서버에 등록
+    await _registerFcmToken();
+    return member;
+  }
+
+  Future<void> _registerFcmToken() async {
+    try {
+      final token = await FirebaseMessaging.instance.getToken();
+      if (token != null) {
+        await _dio.put('/api/member/fcm-token', data: {'fcmToken': token});
+      }
+    } catch (_) {}
   }
 
   Future<void> signOut() async {

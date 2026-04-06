@@ -60,4 +60,43 @@ class GenerateRepository {
       throw NetworkException();
     }
   }
+
+  Future<String> getTtsUrl({
+    required int projectId,
+    required String text,
+    required String voice,
+  }) async {
+    try {
+      final res = await _dio.post(
+        '/api/shorts/projects/$projectId/tts-preview',
+        data: {'text': text, 'voice': voice},
+      );
+      return res.data['url'] as String;
+    } on DioException catch (e) {
+      throw ServerException(
+          e.response?.data?['message'] as String? ?? 'TTS 생성 실패');
+    }
+  }
+
+  Future<String> aiRewrite({
+    required int projectId,
+    required String text,
+    required String style,
+    String? instruction,
+  }) async {
+    try {
+      final res = await _dio.post(
+        '/api/shorts/projects/$projectId/ai-rewrite',
+        data: {
+          'text': text,
+          'style': style,
+          if (instruction != null) 'instruction': instruction,
+        },
+      );
+      return res.data['result'] as String;
+    } on DioException catch (e) {
+      throw ServerException(
+          e.response?.data?['message'] as String? ?? 'AI 재작성 실패');
+    }
+  }
 }
