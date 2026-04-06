@@ -1,28 +1,25 @@
 class MemberModel {
   final int memberId;
   final String email;
-  final String? name;
-  final String? profileImageUrl;
-  final String role; // USER, ADMIN
-  final DateTime createdAt;
+  final String? nickname;
+  final String? profileImg;
+  final String plan;
 
   const MemberModel({
     required this.memberId,
     required this.email,
-    this.name,
-    this.profileImageUrl,
-    required this.role,
-    required this.createdAt,
+    this.nickname,
+    this.profileImg,
+    required this.plan,
   });
 
   factory MemberModel.fromJson(Map<String, dynamic> json) => MemberModel(
-        memberId: json['memberId'] as int,
-        email: json['email'] as String,
-        name: json['name'] as String?,
-        profileImageUrl: json['profileImageUrl'] as String?,
-        role: json['role'] as String? ?? 'USER',
-        createdAt: DateTime.parse(json['createdAt'] as String),
+        memberId: (json['memberId'] as num).toInt(),
+        email: json['email'] as String? ?? '',
+        nickname: json['nickname'] as String?,
+        profileImg: json['profileImg'] as String?,
+        plan: json['plan'] as String? ?? 'free',
       );
 
-  bool get isAdmin => role == 'ADMIN';
+  String get displayName => nickname ?? email;
 }

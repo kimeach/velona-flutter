@@ -15,3 +15,10 @@ class AppColors {
 class AppStrings {
   static const appName = 'Velona AI';
 }
+
+class AppConfig {
+  /// 어드민 이메일 목록 (comma-separated 또는 하드코딩)
+  static const adminEmails = ['kimeach94@gmail.com'];
+
+  static bool isAdmin(String email) => adminEmails.contains(email);
+}

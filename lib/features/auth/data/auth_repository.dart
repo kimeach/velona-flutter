@@ -11,6 +11,12 @@ class AuthRepository {
 
   AuthRepository(this._dio);
 
+  MemberModel _unwrapMember(Response res) {
+    final body = res.data as Map<String, dynamic>;
+    final data = body['data'] as Map<String, dynamic>;
+    return MemberModel.fromJson(data);
+  }
+
   Future<MemberModel> signInWithGoogle() async {
     final googleUser = await _googleSignIn.signIn();
     if (googleUser == null) throw const AppException('로그인이 취소되었습니다.');
@@ -23,11 +29,10 @@ class AuthRepository {
 
     await FirebaseAuth.instance.signInWithCredential(credential);
 
-    // Crown API에 Firebase 토큰으로 회원 정보 요청 (자동 가입 포함)
-    final res = await _dio.get('/api/member/me');
-    final member = MemberModel.fromJson(res.data as Map<String, dynamic>);
+    // POST /api/member/login — 최초 가입 또는 프로필 갱신
+    final res = await _dio.post('/api/member/login');
+    final member = _unwrapMember(res);
 
-    // FCM 토큰 서버에 등록
     await _registerFcmToken();
     return member;
   }
@@ -53,7 +58,7 @@ class AuthRepository {
     if (user == null) return null;
     try {
       final res = await _dio.get('/api/member/me');
-      return MemberModel.fromJson(res.data as Map<String, dynamic>);
+      return _unwrapMember(res);
     } on DioException catch (e) {
       if (e.response?.statusCode == 401) return null;
       throw NetworkException();
