@@ -3,6 +3,7 @@ import '../../projects/domain/project_model.dart';
 import '../domain/question_model.dart';
 import '../domain/script_history_model.dart';
 import '../domain/ai_result_models.dart';
+import '../domain/sound_effect_model.dart';
 import '../../../core/error/app_exception.dart';
 
 class GenerateRepository {
@@ -282,6 +283,31 @@ class GenerateRepository {
       return data is String ? data : (data as Map?)?['srt']?.toString() ?? '';
     } on DioException catch (e) {
       throw _serverErr(e, '영상 자막 추출 실패');
+    }
+  }
+
+  // ─── 효과음 라이브러리 ─────────────────────────────────────────────────────
+
+  /// tab: 'all' | 'favorites' | 'recent'
+  Future<List<SoundEffectModel>> getSoundEffects({
+    String? query,
+    String tab = 'all',
+  }) async {
+    try {
+      final res = await _dio.get(
+        '/api/shorts/sfx',
+        queryParameters: {
+          if (query != null && query.isNotEmpty) 'q': query,
+          'tab': tab,
+        },
+      );
+      final list = _unwrapList(res);
+      return list
+          .map((e) => SoundEffectModel.fromJson(e as Map<String, dynamic>))
+          .toList();
+    } on DioException catch (e) {
+      if (e.response?.statusCode == 401) throw const UnauthorizedException();
+      throw NetworkException();
     }
   }
 

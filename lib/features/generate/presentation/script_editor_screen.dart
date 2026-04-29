@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,6 +10,21 @@ import '../../../core/network/dio_client.dart';
 import '../data/generate_repository.dart';
 import '../domain/script_history_model.dart';
 import '../domain/ai_result_models.dart';
+import '../domain/sound_effect_model.dart';
+
+// ─── 삽입 결과 타입 ───────────────────────────────────────────────────────────
+sealed class _InsertResult {}
+
+class _InsertVideoResult extends _InsertResult {
+  final String path;
+  final String name;
+  _InsertVideoResult(this.path, this.name);
+}
+
+class _InsertSfxResult extends _InsertResult {
+  final SoundEffectModel sfx;
+  _InsertSfxResult(this.sfx);
+}
 
 final _repoProvider = Provider((ref) => GenerateRepository(ref.watch(dioProvider)));
 
@@ -26,6 +42,11 @@ class _ScriptEditorScreenState extends ConsumerState<ScriptEditorScreen> {
   bool _loading = true;
   bool _saving = false;
   String? _error;
+
+  // 삽입 (비디오 / 효과음) — 클립과 1:1 대응
+  List<String?> _videoPathPerClip = [];
+  List<String?> _videoNamePerClip = [];
+  List<SoundEffectModel?> _sfxPerClip = [];
 
   // TTS
   final _player = AudioPlayer();
@@ -66,7 +87,13 @@ class _ScriptEditorScreenState extends ConsumerState<ScriptEditorScreen> {
       _controllers = clips
           .map((c) => TextEditingController(text: c['text'] as String? ?? ''))
           .toList();
-      setState(() { _clips = clips; _loading = false; });
+      setState(() {
+        _clips = clips;
+        _videoPathPerClip = List.filled(clips.length, null);
+        _videoNamePerClip = List.filled(clips.length, null);
+        _sfxPerClip = List.filled(clips.length, null);
+        _loading = false;
+      });
     } catch (e) {
       setState(() { _error = e.toString(); _loading = false; });
     }
@@ -272,6 +299,27 @@ class _ScriptEditorScreenState extends ConsumerState<ScriptEditorScreen> {
     }
   }
 
+  Future<void> _showInsertSheet(int index) async {
+    final result = await showModalBottomSheet<_InsertResult>(
+      context: context,
+      backgroundColor: AppColors.surface,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (_) => _InsertSheet(repo: ref.read(_repoProvider)),
+    );
+    if (result == null || !mounted) return;
+    if (result is _InsertVideoResult) {
+      setState(() {
+        _videoPathPerClip[index] = result.path;
+        _videoNamePerClip[index] = result.name;
+      });
+    } else if (result is _InsertSfxResult) {
+      setState(() => _sfxPerClip[index] = result.sfx);
+    }
+  }
+
   Future<void> _showHistory() async {
     List<ScriptHistoryModel> history = [];
     bool loading = true;
@@ -352,7 +400,13 @@ class _ScriptEditorScreenState extends ConsumerState<ScriptEditorScreen> {
       final controllers = clips
           .map((c) => TextEditingController(text: c['text'] as String? ?? ''))
           .toList();
-      setState(() { _clips = clips; _controllers = controllers; });
+      setState(() {
+        _clips = clips;
+        _controllers = controllers;
+        _videoPathPerClip = List.filled(clips.length, null);
+        _videoNamePerClip = List.filled(clips.length, null);
+        _sfxPerClip = List.filled(clips.length, null);
+      });
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('대본이 복원되었습니다.')),
@@ -468,6 +522,13 @@ class _ScriptEditorScreenState extends ConsumerState<ScriptEditorScreen> {
                           onAiRewrite: () => _aiRewrite(index),
                           onAiTranslate: () => _aiTranslate(index),
                           onChanged: () => setState(() {}),
+                          videoName: _videoNamePerClip.length > index
+                              ? _videoNamePerClip[index]
+                              : null,
+                          sfxModel: _sfxPerClip.length > index
+                              ? _sfxPerClip[index]
+                              : null,
+                          onInsert: () => _showInsertSheet(index),
                         );
                       },
                     ),
@@ -488,6 +549,9 @@ class _ClipCard extends StatelessWidget {
   final VoidCallback onAiRewrite;
   final VoidCallback onAiTranslate;
   final VoidCallback onChanged;
+  final String? videoName;
+  final SoundEffectModel? sfxModel;
+  final VoidCallback onInsert;
 
   const _ClipCard({
     super.key,
@@ -501,6 +565,9 @@ class _ClipCard extends StatelessWidget {
     required this.onAiRewrite,
     required this.onAiTranslate,
     required this.onChanged,
+    this.videoName,
+    this.sfxModel,
+    required this.onInsert,
   });
 
   @override
@@ -561,9 +628,51 @@ class _ClipCard extends StatelessWidget {
                         ],
                       ),
                 const SizedBox(width: 8),
+                // 삽입 버튼
+                GestureDetector(
+                  onTap: onInsert,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: AppColors.border,
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.add, size: 12, color: AppColors.textSecond),
+                        SizedBox(width: 2),
+                        Text('삽입', style: TextStyle(color: AppColors.textSecond, fontSize: 11)),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
                 const Icon(Icons.drag_handle, color: AppColors.textSecond, size: 20),
               ],
             ),
+            // 삽입된 항목 배지
+            if (videoName != null || sfxModel != null) ...[
+              const SizedBox(height: 6),
+              Wrap(
+                spacing: 6,
+                runSpacing: 4,
+                children: [
+                  if (videoName != null)
+                    _InsertBadge(
+                      icon: Icons.videocam,
+                      label: videoName!,
+                      color: const Color(0xFF7C3AED),
+                    ),
+                  if (sfxModel != null)
+                    _InsertBadge(
+                      icon: Icons.music_note,
+                      label: sfxModel!.name,
+                      color: const Color(0xFF059669),
+                    ),
+                ],
+              ),
+            ],
             const SizedBox(height: 8),
             TextField(
               controller: controller,
@@ -582,6 +691,417 @@ class _ClipCard extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+// ─── 삽입 배지 ────────────────────────────────────────────────────────────
+
+class _InsertBadge extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final Color color;
+
+  const _InsertBadge({required this.icon, required this.label, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color.withOpacity(0.4)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 11, color: color),
+          const SizedBox(width: 4),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 160),
+            child: Text(
+              label,
+              style: TextStyle(color: color, fontSize: 11),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── 삽입 패널 ────────────────────────────────────────────────────────────
+
+class _InsertSheet extends StatefulWidget {
+  final GenerateRepository repo;
+  const _InsertSheet({required this.repo});
+
+  @override
+  State<_InsertSheet> createState() => _InsertSheetState();
+}
+
+class _InsertSheetState extends State<_InsertSheet> with TickerProviderStateMixin {
+  late final TabController _mainTabCtrl;
+  late final TabController _sfxTabCtrl;
+
+  // 비디오
+  String? _videoPath;
+  String? _videoName;
+
+  // 효과음
+  final _searchCtrl = TextEditingController();
+  List<SoundEffectModel> _sfxList = [];
+  int _sfxTotal = 0;
+  bool _sfxLoading = false;
+  SoundEffectModel? _selectedSfx;
+  String _sfxTab = 'all';
+
+  static const _sfxTabs = ['all', 'favorites', 'recent'];
+
+  @override
+  void initState() {
+    super.initState();
+    _mainTabCtrl = TabController(length: 2, vsync: this);
+    _sfxTabCtrl = TabController(length: 3, vsync: this);
+    _sfxTabCtrl.addListener(() {
+      if (_sfxTabCtrl.indexIsChanging) return;
+      _sfxTab = _sfxTabs[_sfxTabCtrl.index];
+      _loadSfx();
+    });
+    _loadSfx();
+  }
+
+  @override
+  void dispose() {
+    _mainTabCtrl.dispose();
+    _sfxTabCtrl.dispose();
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _loadSfx() async {
+    setState(() { _sfxLoading = true; });
+    try {
+      final list = await widget.repo.getSoundEffects(
+        query: _searchCtrl.text.trim().isEmpty ? null : _searchCtrl.text.trim(),
+        tab: _sfxTab,
+      );
+      if (mounted) setState(() { _sfxList = list; _sfxTotal = list.length; _sfxLoading = false; });
+    } catch (_) {
+      if (mounted) setState(() => _sfxLoading = false);
+    }
+  }
+
+  Future<void> _pickVideo() async {
+    final result = await FilePicker.platform.pickFiles(type: FileType.video);
+    if (result != null && result.files.single.path != null) {
+      setState(() {
+        _videoPath = result.files.single.path;
+        _videoName = result.files.single.name;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.88,
+      minChildSize: 0.5,
+      maxChildSize: 0.95,
+      builder: (_, scrollCtrl) => Column(
+        children: [
+          // 핸들
+          Center(
+            child: Container(
+              margin: const EdgeInsets.only(top: 8),
+              width: 36,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.border,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          // 헤더
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
+            child: Row(
+              children: [
+                const Text('삽입',
+                    style: TextStyle(
+                        color: AppColors.textPrimary,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16)),
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.close, color: AppColors.textSecond, size: 20),
+                  onPressed: () => Navigator.pop(context),
+                ),
+              ],
+            ),
+          ),
+          // 메인 탭: 비디오 | 효과음
+          TabBar(
+            controller: _mainTabCtrl,
+            indicatorColor: AppColors.accent,
+            labelColor: AppColors.accent,
+            unselectedLabelColor: AppColors.textSecond,
+            tabs: const [
+              Tab(text: '비디오'),
+              Tab(text: '효과음'),
+            ],
+          ),
+          Expanded(
+            child: TabBarView(
+              controller: _mainTabCtrl,
+              physics: const NeverScrollableScrollPhysics(),
+              children: [
+                _buildVideoTab(),
+                _buildSfxTab(scrollCtrl),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildVideoTab() {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // 선택된 영상 표시
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: AppColors.background,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  Icons.video_file,
+                  color: _videoName != null
+                      ? const Color(0xFF7C3AED)
+                      : AppColors.textSecond,
+                  size: 32,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    _videoName ?? '선택된 영상 없음',
+                    style: TextStyle(
+                      color: _videoName != null
+                          ? AppColors.textPrimary
+                          : AppColors.textSecond,
+                      fontSize: 14,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                if (_videoName != null)
+                  GestureDetector(
+                    onTap: () => setState(() { _videoPath = null; _videoName = null; }),
+                    child: const Icon(Icons.close, size: 16, color: AppColors.textSecond),
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          // PC에서 불러오기
+          OutlinedButton.icon(
+            icon: const Icon(Icons.add, size: 18),
+            label: const Text('PC에서 불러오기'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.textPrimary,
+              side: const BorderSide(color: AppColors.border),
+              padding: const EdgeInsets.symmetric(vertical: 14),
+            ),
+            onPressed: _pickVideo,
+          ),
+          const Spacer(),
+          ElevatedButton(
+            onPressed: _videoPath == null
+                ? null
+                : () => Navigator.pop(
+                    context,
+                    _InsertVideoResult(_videoPath!, _videoName!),
+                  ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.accent,
+              disabledBackgroundColor: AppColors.border,
+              padding: const EdgeInsets.symmetric(vertical: 14),
+            ),
+            child: const Text('삽입하기',
+                style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSfxTab(ScrollController scrollCtrl) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        // 무료 효과음 헤더
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+          child: Text(
+            '무료 효과음 (전체 ${_sfxTotal}개)',
+            style: const TextStyle(
+                color: AppColors.textPrimary,
+                fontWeight: FontWeight.bold,
+                fontSize: 13),
+          ),
+        ),
+        // 서브 탭
+        TabBar(
+          controller: _sfxTabCtrl,
+          indicatorColor: AppColors.accent,
+          labelColor: AppColors.accent,
+          unselectedLabelColor: AppColors.textSecond,
+          labelStyle: const TextStyle(fontSize: 13),
+          tabs: const [
+            Tab(text: '전체'),
+            Tab(text: '즐겨찾기'),
+            Tab(text: '최근 사용'),
+          ],
+        ),
+        // 검색바
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+          child: TextField(
+            controller: _searchCtrl,
+            style: const TextStyle(color: AppColors.textPrimary, fontSize: 14),
+            decoration: InputDecoration(
+              hintText: '무료 효과음 검색',
+              hintStyle:
+                  const TextStyle(color: AppColors.textSecond, fontSize: 13),
+              prefixIcon: const Icon(Icons.search,
+                  color: AppColors.textSecond, size: 18),
+              filled: true,
+              fillColor: AppColors.background,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: AppColors.border),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: AppColors.border),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: AppColors.accent),
+              ),
+              contentPadding: const EdgeInsets.symmetric(vertical: 8),
+            ),
+            onSubmitted: (_) => _loadSfx(),
+            onChanged: (v) { if (v.isEmpty) _loadSfx(); },
+          ),
+        ),
+        // 목록
+        Expanded(
+          child: _sfxLoading
+              ? const Center(child: CircularProgressIndicator())
+              : _sfxList.isEmpty
+                  ? Center(
+                      child: Text(
+                        _sfxTab == 'favorites'
+                            ? '즐겨찾기한 효과음이 없습니다.'
+                            : _sfxTab == 'recent'
+                                ? '최근 사용한 효과음이 없습니다.'
+                                : '효과음이 없습니다.',
+                        style: const TextStyle(color: AppColors.textSecond),
+                      ),
+                    )
+                  : ListView.builder(
+                      controller: scrollCtrl,
+                      itemCount: _sfxList.length,
+                      itemBuilder: (_, i) {
+                        final sfx = _sfxList[i];
+                        final selected = _selectedSfx?.id == sfx.id;
+                        return ListTile(
+                          selected: selected,
+                          selectedTileColor:
+                              AppColors.accent.withOpacity(0.08),
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 16, vertical: 2),
+                          title: Text(
+                            sfx.name,
+                            style: TextStyle(
+                              color: selected
+                                  ? AppColors.accent
+                                  : AppColors.textPrimary,
+                              fontSize: 14,
+                              fontWeight: selected
+                                  ? FontWeight.w600
+                                  : FontWeight.normal,
+                            ),
+                          ),
+                          subtitle: Text(
+                            '${sfx.durationSec.toStringAsFixed(2)}초  '
+                            '${sfx.tags.map((t) => '#$t').join(' ')}',
+                            style: const TextStyle(
+                                color: AppColors.textSecond, fontSize: 11),
+                          ),
+                          trailing: selected
+                              ? const Icon(Icons.check_circle,
+                                  color: AppColors.accent, size: 18)
+                              : null,
+                          onTap: () => setState(() =>
+                              _selectedSfx = selected ? null : sfx),
+                        );
+                      },
+                    ),
+        ),
+        // 하단 바
+        Container(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+          decoration: const BoxDecoration(
+            border: Border(top: BorderSide(color: AppColors.border)),
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _selectedSfx == null
+                      ? '선택된 효과음 없음'
+                      : _selectedSfx!.name,
+                  style: TextStyle(
+                    color: _selectedSfx == null
+                        ? AppColors.textSecond
+                        : AppColors.textPrimary,
+                    fontSize: 13,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              const SizedBox(width: 12),
+              ElevatedButton(
+                onPressed: _selectedSfx == null
+                    ? null
+                    : () => Navigator.pop(
+                        context,
+                        _InsertSfxResult(_selectedSfx!),
+                      ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.accent,
+                  disabledBackgroundColor: AppColors.border,
+                ),
+                child: const Text('+ 삽입하기',
+                    style: TextStyle(color: Colors.white)),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
